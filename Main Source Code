@@ -1,0 +1,461 @@
+//Name: Andy Le
+//Project Partners: Jared Licht, Daymian Nguyen
+//Start Date: 03/21/24
+
+#include "address_map_nios2.h"
+#include "nios2_ctrl_reg_macros.h"
+#include <stdio.h>
+#include "JTAG_UART.h"  //must add this
+
+volatile int timeout;	//global variable used for synchronization
+
+volatile int pixel_buffer_start = FPGA_ONCHIP_BASE;
+
+//Screen Resolutions************************************************************************************************************************
+//******************************************************************************************************************************************
+int resolution_x = 320;		//maximum x coordinate
+int resolution_y = 240;		//maximum y coordinate
+
+int x_dir = 1;
+int i;
+int spawn = 0;
+int spawn2 = 0;
+int spawn3 = 0;
+int spawn4 = 0;
+
+//Function Prototypes***********************************************************************************************************************
+//******************************************************************************************************************************************
+void clearScreen();
+void VGA_box(int, int, int, int, short);
+void VGA_text(int, int, char*);
+void dashpullback(int x1Box, int x2Box, int y1Box, int y2Box);
+
+//Structs for Player, Ground, Obstacles Below***********************************************************************************************
+//******************************************************************************************************************************************
+typedef struct
+{
+    int obsx1;    //Obstacle small
+    int obsx2;
+    int obsy1;
+    int obsy2;
+}ObsSmall;
+
+typedef struct
+{
+    int obsx1;    //Obstacle small Flat
+    int obsx2;
+    int obsy1;
+    int obsy2;
+}ObsSmallFlat;
+
+typedef struct
+{
+    int obsx1;    //Obstacle large
+    int obsx2;
+    int obsy1;
+    int obsy2;
+}ObsLarge;
+
+typedef struct
+{
+    int obsx1;    //Obstacle large Flat
+    int obsx2;
+    int obsy1;
+    int obsy2;
+}ObsLargeFlat;
+
+typedef struct
+{
+    int Left_x1Box;     //Player Box
+    int Right_x2Box;
+    int Top_y1Box;
+    int Bottom_y2Box;
+}PlayerBox;
+
+typedef struct
+{
+    int xground1;   //Ground Level
+    int xground2;
+    int yground1;
+    int yground2;
+}Ground;
+
+
+int main()
+{
+    volatile int* interval_timer_ptr = (int*)TIMER_BASE;
+
+    timeout = 0;    //use this as a barrier
+
+    int counter = 0x960000;		//approx 200ms
+    *(interval_timer_ptr + 2) = (counter & 0xFFFF);
+    *(interval_timer_ptr + 3) = (counter >> 16) & 0xFFFF;
+    *(interval_timer_ptr + 1) = 0x7;
+
+    NIOS2_WRITE_IENABLE(0x1);
+    NIOS2_WRITE_STATUS(1);
+
+    clearScreen();
+
+    //declaring struct variables
+    PlayerBox Player = {99, 113, 184, 198};
+    Ground GroundLevel = {0, 319, 199, 239};
+    ObsSmall SmallObstacle = {299, 319, 178, 198};
+    ObsSmallFlat SmallObstacleFlat = {289, 319, 175, 198};
+    ObsLarge LargeObstacle = {284, 319, 183, 198};
+    ObsLargeFlat LargeObstacleFlat = {280, 319, 176, 198};
+
+    VGA_box(Player.Left_x1Box, Player.Top_y1Box, Player.Right_x2Box, Player.Bottom_y2Box, 0xFA00);              //print initial player box; red
+    VGA_box(GroundLevel.xground1, GroundLevel.yground1, GroundLevel.xground2, GroundLevel.yground2, 0xDCDCDC);  //Ground line for everything to build off of; Grey color
+
+    volatile int* JTAG_UART_ptr = (int*)JTAG_UART_BASE; //must add this
+
+    while (1)
+    {
+        while (!timeout);
+
+        char c = get_jtag(JTAG_UART_ptr);   //reading the input from the keyboard
+        clearScreen();
+
+//Player Controls Below*********************************************************************************************************************
+//******************************************************************************************************************************************
+        switch (c)
+        {
+        case 'w':           //Jump
+            //do something
+            printf("%c", c);
+            if (Player.Bottom_y2Box == 198)        //can jump if player is on the ground
+            {
+                int JumpHeight = 27;
+                Player.Top_y1Box = Player.Top_y1Box - JumpHeight;
+                Player.Bottom_y2Box = Player.Bottom_y2Box - JumpHeight;
+                Player.Left_x1Box = Player.Left_x1Box;
+                Player.Right_x2Box = Player.Right_x2Box;
+
+                VGA_box(Player.Left_x1Box, Player.Top_y1Box, Player.Right_x2Box, Player.Bottom_y2Box, 0xFA00);    //print player box; red
+            }
+            else if (Player.Bottom_y2Box > SmallObstacle.obsy1 - 3 && (SmallObstacle.obsx2 >= Player.Left_x1Box && Player.Right_x2Box >= SmallObstacle.obsx1))
+            {                                      //can jump if player is on standing on top of smallObstacle
+                int Dif = 27;
+                Player.Top_y1Box = Player.Top_y1Box - Dif;
+                Player.Bottom_y2Box = Player.Bottom_y2Box - Dif;
+                Player.Left_x1Box = Player.Left_x1Box;
+                Player.Right_x2Box = Player.Right_x2Box;
+
+                VGA_box(Player.Left_x1Box, Player.Top_y1Box, Player.Right_x2Box, Player.Bottom_y2Box, 0xFA00);    //print player box; red
+            }
+            else if (Player.Bottom_y2Box > SmallObstacleFlat.obsy1 - 3 && (SmallObstacleFlat.obsx2 >= Player.Left_x1Box && Player.Right_x2Box >= SmallObstacleFlat.obsx1))
+            {                                      //can jump if player is on standing on top of smallObstacle
+                int Dif = 27;
+                Player.Top_y1Box = Player.Top_y1Box - Dif;
+                Player.Bottom_y2Box = Player.Bottom_y2Box - Dif;
+                Player.Left_x1Box = Player.Left_x1Box;
+                Player.Right_x2Box = Player.Right_x2Box;
+
+                VGA_box(Player.Left_x1Box, Player.Top_y1Box, Player.Right_x2Box, Player.Bottom_y2Box, 0xFA00);    //print player box; red
+            }
+            else if (Player.Bottom_y2Box > LargeObstacle.obsy1 - 3 && (LargeObstacle.obsx2 >= Player.Left_x1Box && Player.Right_x2Box >= LargeObstacle.obsx1))
+            {                                      //can jump if player is on standing on top of smallObstacle
+                int Dif = 27;
+                Player.Top_y1Box = Player.Top_y1Box - Dif;
+                Player.Bottom_y2Box = Player.Bottom_y2Box - Dif;
+                Player.Left_x1Box = Player.Left_x1Box;
+                Player.Right_x2Box = Player.Right_x2Box;
+
+                VGA_box(Player.Left_x1Box, Player.Top_y1Box, Player.Right_x2Box, Player.Bottom_y2Box, 0xFA00);    //print player box; red
+            }
+            else if (Player.Bottom_y2Box > LargeObstacleFlat.obsy1 - 3 && (LargeObstacleFlat.obsx2 >= Player.Left_x1Box && Player.Right_x2Box >= LargeObstacleFlat.obsx1))
+            {                                      //can jump if player is on standing on top of smallObstacle
+                int Dif = 27;
+                Player.Top_y1Box = Player.Top_y1Box - Dif;
+                Player.Bottom_y2Box = Player.Bottom_y2Box - Dif;
+                Player.Left_x1Box = Player.Left_x1Box;
+                Player.Right_x2Box = Player.Right_x2Box;
+
+                VGA_box(Player.Left_x1Box, Player.Top_y1Box, Player.Right_x2Box, Player.Bottom_y2Box, 0xFA00);    //print player box; red
+            }
+            break;
+        case 'd':       //Dash
+            //do something
+            printf("%c", c);
+            Player.Left_x1Box = Player.Left_x1Box + 6;     //Player Box
+            Player.Right_x2Box = Player.Right_x2Box + 6;
+            Player.Top_y1Box = Player.Top_y1Box;
+            Player.Bottom_y2Box = Player.Bottom_y2Box;
+            VGA_box(Player.Left_x1Box, Player.Top_y1Box, Player.Right_x2Box, Player.Bottom_y2Box, 0xFA00);    //print player box; red
+            break;
+        case 's':           //fast fall
+            //do something
+            if (Player.Bottom_y2Box < 198 || (Player.Bottom_y2Box > 177 && Player.Right_x2Box >= SmallObstacle.obsx1))
+            Player.Left_x1Box = Player.Left_x1Box;     //Player Box
+            Player.Right_x2Box = Player.Right_x2Box;
+            Player.Top_y1Box = Player.Top_y1Box + 1;
+            Player.Bottom_y2Box = Player.Bottom_y2Box + 1;
+            VGA_box(Player.Left_x1Box, Player.Top_y1Box, Player.Right_x2Box, Player.Bottom_y2Box, 0xFA00);    //print player box; red
+            break;
+        }
+
+//Main Game Characteristics Below***********************************************************************************************************
+//******************************************************************************************************************************************
+        if (Player.Left_x1Box > 99)                                                                       //When Player Box Dashes,
+        {                                                                                                 //This if-statement pulls the box
+            Player.Left_x1Box = Player.Left_x1Box - 1;     //Move Player Box to the left
+            Player.Right_x2Box = Player.Right_x2Box - 1;
+            Player.Top_y1Box = Player.Top_y1Box;
+            Player.Bottom_y2Box = Player.Bottom_y2Box;;   //back to the original position
+            clearScreen();
+            VGA_box(Player.Left_x1Box, Player.Top_y1Box, Player.Right_x2Box, Player.Bottom_y2Box, 0xFA00);//print player box; red
+        }
+
+        if (Player.Bottom_y2Box < 198)
+        {
+            Player.Left_x1Box = Player.Left_x1Box;
+            Player.Right_x2Box = Player.Right_x2Box;      //gravity
+            Player.Top_y1Box = Player.Top_y1Box + 1;
+            Player.Bottom_y2Box = Player.Bottom_y2Box + 1;
+            clearScreen();
+            VGA_box(Player.Left_x1Box, Player.Top_y1Box, Player.Right_x2Box, Player.Bottom_y2Box, 0xFA00);//print player box; red
+        }
+
+//Spawning Obstacles Below******************************************************************************************************************
+//******************************************************************************************************************************************
+
+            if (SmallObstacle.obsx1 == 299)
+            {
+                VGA_box(SmallObstacle.obsx1, SmallObstacle.obsy1, SmallObstacle.obsx2, SmallObstacle.obsy2, 0xB65FCF);  //Draw a green obstacle
+                spawn = 1;
+            }
+            else if (LargeObstacle.obsx1 == 284 && SmallObstacle.obsx1 <= 200)
+            {
+                VGA_box(LargeObstacle.obsx1, LargeObstacle.obsy1, LargeObstacle.obsx2, LargeObstacle.obsy2, 0xB65FCF);
+                spawn2 = 1;
+            }
+            else if (SmallObstacle.obsx1 == 289 && LargeObstacle.obsx1 <= 180)
+            {
+                VGA_box(SmallObstacleFlat.obsx1, SmallObstacleFlat.obsy1, SmallObstacleFlat.obsx2, SmallObstacleFlat.obsy2, 0xB65FCF);
+                spawn3 = 1;
+            }
+            else if (LargeObstacleFlat.obsx1 == 280&& SmallObstacleFlat.obsx1 <= 190)
+            {
+                VGA_box(LargeObstacle.obsx1, LargeObstacle.obsy1, LargeObstacle.obsx2, LargeObstacle.obsy2, 0xB65FCF);
+                spawn4 = 1;
+            }
+        }
+
+        for (i = 0; i < 150; i++)
+        {
+            {
+
+                i = 0;
+            }
+        }
+
+//Small Obstacle Characteristics###################################################################################################################
+        if (SmallObstacle.obsx1 <= 299 && spawn == 1)
+        {
+            SmallObstacle.obsx1 = SmallObstacle.obsx1 - x_dir;	//move left edge left 1
+            SmallObstacle.obsx2 = SmallObstacle.obsx2 - x_dir;	//move right edge left 1
+            SmallObstacle.obsy1 = SmallObstacle.obsy1;
+            SmallObstacle.obsy2 = SmallObstacle.obsy2;
+            VGA_box(SmallObstacle.obsx1, SmallObstacle.obsy1, SmallObstacle.obsx2, SmallObstacle.obsy2, 0xB65FCF);  //Draw a green obstacle
+        }
+        else if (SmallObstacle.obsx1 == 0)
+        {
+            Sleep(100);
+            spawn = 0;
+            SmallObstacle.obsx1 = 299;    //Once SmallObstacle reaches the left side of the screen,
+            SmallObstacle.obsx2 = 319;                          //set coordinates all to be all the way to the right
+            SmallObstacle.obsy1 = 178;
+            SmallObstacle.obsy2 = 198;
+        }
+
+        while (/*(Player.Bottom_y2Box == SmallObstacle.obsy1 - 1 || Player.Bottom_y2Box > SmallObstacle.obsy1)*/Player.Bottom_y2Box == SmallObstacle.obsy1 - 1 && (SmallObstacle.obsx2 >= Player.Left_x1Box && Player.Right_x2Box >= SmallObstacle.obsx1))
+        {
+            Player.Bottom_y2Box = Player.Bottom_y2Box - 1;              //This section is used so that the the player is able
+            Player.Top_y1Box = Player.Top_y1Box - 1;                    //to stand on top of the small obstacle
+            Player.Left_x1Box = Player.Left_x1Box;
+            Player.Right_x2Box = Player.Right_x2Box;
+            VGA_box(Player.Left_x1Box, Player.Top_y1Box, Player.Right_x2Box, Player.Bottom_y2Box, 0xFA00);
+        }
+
+//Small Obstacle FLAT Characteristics############################################################################################################
+        if (SmallObstacleFlat.obsx1 <= 289 && spawn2 == 1)
+        {
+            SmallObstacleFlat.obsx1 = SmallObstacleFlat.obsx1 - x_dir;	//move left edge left 1
+            SmallObstacleFlat.obsx2 = SmallObstacleFlat.obsx2 - x_dir;	//move right edge left 1
+            SmallObstacleFlat.obsy1 = SmallObstacleFlat.obsy1;
+            SmallObstacleFlat.obsy2 = SmallObstacle.obsy2;
+            VGA_box(SmallObstacleFlat.obsx1, SmallObstacleFlat.obsy1, SmallObstacleFlat.obsx2, SmallObstacleFlat.obsy2, 0xB65FCF);  //Draw a lilac/purple obstacle
+        }
+        else if (SmallObstacleFlat.obsx1 == 0)
+        {
+            Sleep(100);
+            spawn2 = 0;
+            SmallObstacleFlat.obsx1 = SmallObstacleFlat.obsx1 + 289;    //Once SmallObstacleFlat reaches the left side of the screen,
+            SmallObstacleFlat.obsx2 = 319;                              //set coordinates all to be all the way to the right
+            SmallObstacleFlat.obsy1 = 175;
+            SmallObstacleFlat.obsy2 = 198;
+        }
+
+        while (/*(Player.Bottom_y2Box == SmallObstacleFlat.obsy1 - 1 || Player.Bottom_y2Box > SmallObstacleFlat.obsy1)*/Player.Bottom_y2Box == SmallObstacleFlat.obsy1 - 1 && (SmallObstacleFlat.obsx2 >= Player.Left_x1Box && Player.Right_x2Box >= SmallObstacleFlat.obsx1))
+        {
+            Player.Bottom_y2Box = Player.Bottom_y2Box - 1;              //This section is used so that the the player is able
+            Player.Top_y1Box = Player.Top_y1Box - 1;                    //to stand on top of the small obstacle Flat
+            Player.Left_x1Box = Player.Left_x1Box;
+            Player.Right_x2Box = Player.Right_x2Box;
+            VGA_box(Player.Left_x1Box, Player.Top_y1Box, Player.Right_x2Box, Player.Bottom_y2Box, 0xFA00);
+        }
+
+//Large Obstacle Characteristics$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+        if (LargeObstacle.obsx1 <= 284 && spawn3 == 1)
+        {
+            LargeObstacle.obsx1 = LargeObstacle.obsx1 - x_dir;	//move left edge left 1
+            LargeObstacle.obsx2 = LargeObstacle.obsx2 - x_dir;	//move right edge left 1
+            LargeObstacle.obsy1 = LargeObstacle.obsy1;
+            LargeObstacle.obsy2 = LargeObstacle.obsy2;
+            VGA_box(LargeObstacle.obsx1, LargeObstacle.obsy1, LargeObstacle.obsx2, LargeObstacle.obsy2, 0xB65FCF);  //Draw a lilac/purple obstacle
+        }
+        else if (LargeObstacle.obsx1 == 0)
+        {
+            Sleep(100);
+            spawn3 = 0;
+            LargeObstacle.obsx1 = LargeObstacle.obsx1 + 284;    //Once LargeObstacle reaches the left side of the screen,
+            LargeObstacle.obsx2 = 319;                          //set coordinates all to be all the way to the right
+            LargeObstacle.obsy1 = 183;
+            LargeObstacle.obsy2 = 198;
+        }
+
+        while (/*(Player.Bottom_y2Box == LargeObstacle.obsy1 - 1 || Player.Bottom_y2Box > LargeObstacle.obsy1)*/Player.Bottom_y2Box == LargeObstacle.obsy1 - 1 && (LargeObstacle.obsx2 >= Player.Left_x1Box && Player.Right_x2Box >= LargeObstacle.obsx1))
+        {
+            Player.Bottom_y2Box = Player.Bottom_y2Box - 1;              //This section is used so that the the player is able
+            Player.Top_y1Box = Player.Top_y1Box - 1;                    //to stand on top of the large obstacle
+            Player.Left_x1Box = Player.Left_x1Box;
+            Player.Right_x2Box = Player.Right_x2Box;
+            VGA_box(Player.Left_x1Box, Player.Top_y1Box, Player.Right_x2Box, Player.Bottom_y2Box, 0xFA00);
+        }
+
+//Large Obstacle FLAT Characteristics$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+        if (LargeObstacleFlat.obsx1 <= 289 && spawn4 == 1)
+        {
+            LargeObstacleFlat.obsx1 = LargeObstacleFlat.obsx1 - x_dir;	//move left edge left 1
+            LargeObstacleFlat.obsx2 = LargeObstacleFlat.obsx2 - x_dir;	//move right edge left 1
+            LargeObstacleFlat.obsy1 = LargeObstacleFlat.obsy1;
+            LargeObstacleFlat.obsy2 = LargeObstacle.obsy2;
+            VGA_box(LargeObstacleFlat.obsx1, LargeObstacleFlat.obsy1, LargeObstacleFlat.obsx2, LargeObstacleFlat.obsy2, 0xB65FCF);  //Draw a lilac/purple obstacle
+        }
+        else if (LargeObstacleFlat.obsx1 == 0)
+        {
+            Sleep(100);
+            spawn4 = 0;
+            LargeObstacleFlat.obsx1 = LargeObstacleFlat.obsx1 + 280;    //Once LargeObstacleFlat reaches the left side of the screen,
+            LargeObstacleFlat.obsx2 = 319;                              //set coordinates all to be all the way to the right
+            LargeObstacleFlat.obsy1 = 176;
+            LargeObstacleFlat.obsy2 = 198;
+        }
+
+        while (/*(Player.Bottom_y2Box == LargeObstacleFlat.obsy1 - 1 || Player.Bottom_y2Box > LargeObstacleFlat.obsy1)*/Player.Bottom_y2Box == LargeObstacleFlat.obsy1 - 1 && (LargeObstacleFlat.obsx2 >= Player.Left_x1Box && Player.Right_x2Box >= LargeObstacleFlat.obsx1))
+        {
+            Player.Bottom_y2Box = Player.Bottom_y2Box - 1;              //This section is used so that the the player is able
+            Player.Top_y1Box = Player.Top_y1Box - 1;                    //to stand on top of the large obstacle flat
+            Player.Left_x1Box = Player.Left_x1Box;
+            Player.Right_x2Box = Player.Right_x2Box;
+            VGA_box(Player.Left_x1Box, Player.Top_y1Box, Player.Right_x2Box, Player.Bottom_y2Box, 0xFA00);
+        }
+
+//End Game Code Below***********************************************************************************************************************
+//******************************************************************************************************************************************
+
+        VGA_box(Player.Left_x1Box, Player.Top_y1Box, Player.Right_x2Box, Player.Bottom_y2Box, 0xFA00);    //print initial player box; red
+        timeout = 0;
+
+        if ((SmallObstacle.obsx2 >= Player.Left_x1Box && Player.Right_x2Box >= SmallObstacle.obsx1) && Player.Top_y1Box >= SmallObstacle.obsy1)
+        {
+            break;
+        }
+        else if ((SmallObstacleFlat.obsx2 >= Player.Left_x1Box && Player.Right_x2Box >= SmallObstacleFlat.obsx1) && Player.Top_y1Box >= SmallObstacleFlat.obsy1)
+        {
+            break;
+        }
+        else if ((LargeObstacle.obsx2 >= Player.Left_x1Box && Player.Right_x2Box >= LargeObstacle.obsx1) && Player.Top_y1Box >= LargeObstacle.obsy1)
+        {
+            break;
+        }
+        else if ((LargeObstacleFlat.obsx2 >= Player.Left_x1Box && Player.Right_x2Box >= LargeObstacleFlat.obsx1) && Player.Top_y1Box >= LargeObstacleFlat.obsy1)
+        {
+            break;
+        }
+
+    }
+    return 0;
+}
+
+//function definitions
+
+int randomObstacleSpawn(int* value1)
+{
+    int* value1;
+    srand(time(NULL));
+    *value1 = 1 + (int)rand() % 400;
+
+    return *value1;
+}
+
+void dashpullback(int x1Box, int x2Box, int y1Box, int y2Box)
+{
+    x1Box = x1Box - 1;     //Move Player Box to the left
+    x2Box = x2Box - 1;
+    y1Box = y1Box;
+    y2Box = y2Box;
+}
+
+void Gravity(int x1Box, int x2Box, int y1Box, int y2Box)
+{
+    x1Box = x1Box;
+    x2Box = x2Box;      //gravity
+    y1Box = y1Box + 1;
+    y2Box = y2Box + 1;
+}
+
+void VGA_box(int x1, int y1, int x2, int y2, short pixel_color)
+{
+    int pixel_ptr, row, col;
+    //for each row (from y1 to y2)
+    for (row = y1; row <= y2; row++)
+    {
+        //go through each column (from x1 to x2)
+        for (col = x1; col <= x2; col++)
+        {
+            //use this for the VGA monitor
+            pixel_ptr = FPGA_ONCHIP_BASE + (row << 10) + (col << 1);
+
+            //use this for the emulator
+            //pixel_ptr = FPGA_ONCHIP_BASE + (row << 9) + (col << 1);
+
+            *(short*)pixel_ptr = pixel_color;
+        }
+    }
+
+}
+
+void clearScreen()
+{
+    int clearColor = 0;		//black
+    int pixel_ptr, row, col;
+
+    //for each row (entire screen)
+    for (row = 0; row <= 198; row++)
+    {
+        //go through each column (entire screen)
+        for (col = 0; col <= resolution_x; col++)
+        {
+            //use this for the VGA monitor
+            pixel_ptr = FPGA_ONCHIP_BASE + (row << 10) + (col << 1);
+
+            //use this for the emulator
+            //pixel_ptr = FPGA_ONCHIP_BASE + (row << 9) + (col << 1);
+
+            *(short*)pixel_ptr = clearColor;
+        }
+    }
+
+}
